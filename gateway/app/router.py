@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 import httpx
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 AUTH_SERVICE_URL = "http://auth_service:8000"
 TASK_SERVICE_URL = "http://task_service:8000"
@@ -25,43 +27,85 @@ async def proxy_response(r: httpx.Response):
 
 @router.post("/login")
 async def login(request: Request):
-    async with httpx.AsyncClient() as client:
-        r = await client.post(
-            f"{AUTH_SERVICE_URL}/login",
-            json=await request.json()
+    try:
+        body = await request.json()
+        logger.info(f"Login attempt for: {body.get('email')}")
+        
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{AUTH_SERVICE_URL}/login",
+                json=body
+            )
+        return await proxy_response(r)
+    except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Gateway error: {str(e)}"}
         )
-    return await proxy_response(r)
 
 
 @router.post("/register")
 async def register(request: Request):
-    async with httpx.AsyncClient() as client:
-        r = await client.post(
-            f"{AUTH_SERVICE_URL}/register",
-            json=await request.json()
+    try:
+        body = await request.json()
+        logger.info(f"Register attempt for: {body.get('email')}")
+        
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{AUTH_SERVICE_URL}/register",
+                json=body
+            )
+        return await proxy_response(r)
+    except Exception as e:
+        logger.error(f"Register error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Gateway error: {str(e)}"}
         )
-    return await proxy_response(r)
 
 
 @router.api_route("/tasks/", methods=["GET", "POST"])
 async def tasks(request: Request):
-    async with httpx.AsyncClient() as client:
-        r = await client.request(
-            request.method,
-            f"{TASK_SERVICE_URL}/tasks/",
-            headers=forward_headers(request),
-            json=await request.json() if request.method != "GET" else None
+    try:
+        body = None
+        if request.method == "POST":
+            body = await request.json()
+        
+        async with httpx.AsyncClient() as client:
+            r = await client.request(
+                request.method,
+                f"{TASK_SERVICE_URL}/tasks/",
+                headers=forward_headers(request),
+                json=body
+            )
+        return await proxy_response(r)
+    except Exception as e:
+        logger.error(f"Tasks error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Gateway error: {str(e)}"}
         )
-    return await proxy_response(r)
 
 
-@router.api_route("/tasks/{task_id}/", methods=["PUT", "DELETE"])
+@router.api_route("/tasks/{task_id}", methods=["PUT", "DELETE"])
 async def task_detail(task_id: int, request: Request):
-    async with httpx.AsyncClient() as client:
-        r = await client.request(
-            request.method,
-            f"{TASK_SERVICE_URL}/tasks/{task_id}/",
-            headers=forward_headers(request),
-            json=await request.json() if request.method == "PUT" else None
+    try:
+        body = None
+        if request.method == "PUT":
+            body = await request.json()
+        
+        async with httpx.AsyncClient() as client:
+            r = await client.request(
+                request.method,
+                f"{TASK_SERVICE_URL}/tasks/{task_id}",
+                headers=forward_headers(request),
+                json=body
+            )
+        return await proxy_response(r)
+    except Exception as e:
+        logger.error(f"Task detail error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Gateway error: {str(e)}"}
         )
-    return await proxy_response(r)

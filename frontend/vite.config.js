@@ -7,17 +7,11 @@ export default defineConfig({
     host: true,
     port: 5173,
     proxy: {
-      "/login": {
+      // Only proxy API calls, not page routes
+      "/api": {
         target: "http://gateway:8000",
         changeOrigin: true,
-      },
-      "/register": {
-        target: "http://gateway:8000",
-        changeOrigin: true,
-      },
-      "/tasks": {
-        target: "http://gateway:8000",
-        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
       },
     },
   },

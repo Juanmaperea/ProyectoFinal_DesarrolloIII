@@ -16,7 +16,8 @@ def get_current_user_id(authorization: str = Header(...)):
             )
 
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("user_id")
+        # Changed from "user_id" to "sub" to match what auth_service encodes
+        user_id = payload.get("sub")
 
         if user_id is None:
             raise HTTPException(
@@ -24,7 +25,7 @@ def get_current_user_id(authorization: str = Header(...)):
                 detail="Invalid token payload"
             )
 
-        return user_id
+        return int(user_id)  # Convert to int since it's stored as string
 
     except (JWTError, ValueError):
         raise HTTPException(
