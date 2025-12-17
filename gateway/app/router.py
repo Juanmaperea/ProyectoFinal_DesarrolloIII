@@ -109,3 +109,23 @@ async def task_detail(task_id: int, request: Request):
             status_code=500,
             content={"detail": f"Gateway error: {str(e)}"}
         )
+
+
+@router.get("/tasks/saga-logs")
+async def saga_logs(request: Request):
+    """
+    Nuevo endpoint para obtener logs de SAGA
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{TASK_SERVICE_URL}/tasks/saga-logs",
+                headers=forward_headers(request)
+            )
+        return await proxy_response(r)
+    except Exception as e:
+        logger.error(f"SAGA logs error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Gateway error: {str(e)}"}
+        )
