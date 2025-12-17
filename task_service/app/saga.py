@@ -8,12 +8,13 @@ logger = logging.getLogger(__name__)
 
 class TaskCreationSaga:
     """
-    Implementación del patrón SAGA para creación de tareas
+    SAGA con Coreografía Pura
     
-    Flujo:
-    1. Crear tarea en BD (Task Service)
-    2. Enviar notificación (Notification Service)
-    3. Si falla paso 2 -> Compensar: eliminar tarea
+    Diferencias con la versión anterior:
+    - NO espera respuesta síncrona del Notification Service
+    - Publica evento y continúa (fire-and-forget)
+    - La compensación se ejecuta cuando RECIBE un evento de fallo
+    - Cada servicio es autónomo y reacciona a eventos
     """
     
     def __init__(self, db: Session):
@@ -21,25 +22,23 @@ class TaskCreationSaga:
     
     def execute(self, task_data: dict, user_id: int) -> dict:
         """
-        Ejecuta la SAGA completa
-        Retorna: {"success": bool, "task": Task, "message": str}
+        Ejecuta PASO 1 del SAGA: Crear tarea
+        Luego publica evento y retorna INMEDIATAMENTE
         """
         saga_id = f"task_creation_{datetime.utcnow().timestamp()}"
         
         # Log inicio de SAGA
-        self._log_saga(saga_id, "STARTED", "Task creation SAGA started")
-        
-        task = None
+        self._log_saga(saga_id, "STARTED", "Task creation SAGA started (choreography)")
         
         try:
             # ========== PASO 1: Crear Tarea ==========
             logger.info(f"🔵 SAGA {saga_id} | STEP 1: Creating task")
-            task = self._create_task(task_data, user_id)
+            task = self._create_task(task_data, user_id, saga_id)
             self._log_saga(saga_id, "TASK_CREATED", f"Task {task.id} created")
             
-            # ========== PASO 2: Enviar Notificación ==========
-            logger.info(f"🔵 SAGA {saga_id} | STEP 2: Sending notification")
-            notification_sent = EventBus.publish_sync(
+            # ========== PASO 2: Publicar Evento (Fire-and-Forget) ==========
+            logger.info(f"🔵 SAGA {saga_id} | STEP 2: Publishing event (async)")
+            EventBus.publish_async_fire_and_forget(
                 "task_created",
                 {
                     "task_id": task.id,
@@ -49,35 +48,22 @@ class TaskCreationSaga:
                 }
             )
             
-            if not notification_sent:
-                # ⚠️ Notificación falló -> COMPENSAR
-                logger.warning(f"⚠️ SAGA {saga_id} | Notification failed, starting compensation")
-                self._compensate_task_creation(task, saga_id)
-                
-                return {
-                    "success": False,
-                    "task": None,
-                    "message": "Task creation failed: notification service unavailable"
-                }
-            
-            # ========== SAGA COMPLETADA ==========
-            self._log_saga(saga_id, "COMPLETED", f"SAGA completed for task {task.id}")
-            logger.info(f"✅ SAGA {saga_id} | COMPLETED successfully")
+            # ⚡ IMPORTANTE: En coreografía, retornamos INMEDIATAMENTE
+            # No esperamos confirmación del Notification Service
+            self._log_saga(saga_id, "EVENT_PUBLISHED", f"Event published for task {task.id}")
+            logger.info(f"✅ SAGA {saga_id} | Task created and event published")
             
             return {
                 "success": True,
                 "task": task,
-                "message": "Task created successfully"
+                "message": "Task created successfully",
+                "saga_id": saga_id
             }
             
         except Exception as e:
-            # Error inesperado -> COMPENSAR si la tarea fue creada
-            logger.error(f"💥 SAGA {saga_id} | Unexpected error: {str(e)}")
-            
-            if task:
-                self._compensate_task_creation(task, saga_id)
-            
-            self._log_saga(saga_id, "FAILED", f"SAGA failed: {str(e)}")
+            # Error en la creación de la tarea
+            logger.error(f"💥 SAGA {saga_id} | Task creation failed: {str(e)}")
+            self._log_saga(saga_id, "FAILED", f"Task creation failed: {str(e)}")
             
             return {
                 "success": False,
@@ -85,37 +71,48 @@ class TaskCreationSaga:
                 "message": f"Task creation failed: {str(e)}"
             }
     
-    def _create_task(self, task_data: dict, user_id: int) -> Task:
-        """Paso 1: Crear tarea en la base de datos"""
-        task = Task(**task_data, user_id=user_id)
-        self.db.add(task)
-        self.db.commit()
-        self.db.refresh(task)
-        logger.info(f"✅ Task {task.id} created in database")
-        return task
-    
-    def _compensate_task_creation(self, task: Task, saga_id: str):
+    def compensate(self, task_id: int, saga_id: str, reason: str):
         """
-        COMPENSACIÓN: Eliminar la tarea si algo falló
-        Este es el ROLLBACK del SAGA
+        Compensación ejecutada cuando se RECIBE un evento de fallo
+        Esta función se llama desde el event handler
         """
         try:
-            logger.warning(f"🔄 SAGA {saga_id} | COMPENSATING: Deleting task {task.id}")
+            logger.warning(f"🔄 SAGA {saga_id} | COMPENSATING: Deleting task {task_id}")
+            logger.warning(f"   Reason: {reason}")
             
+            task = self.db.query(Task).filter(Task.id == task_id).first()
+            
+            if not task:
+                logger.error(f"❌ SAGA {saga_id} | Task {task_id} not found for compensation")
+                self._log_saga(saga_id, "COMPENSATION_FAILED", f"Task {task_id} not found")
+                return False
+            
+            # Eliminar la tarea
             self.db.delete(task)
             self.db.commit()
             
             self._log_saga(
                 saga_id, 
                 "COMPENSATED", 
-                f"Task {task.id} deleted (rollback)"
+                f"Task {task_id} deleted. Reason: {reason}"
             )
             
-            logger.info(f"✅ SAGA {saga_id} | Task {task.id} successfully deleted (compensated)")
+            logger.info(f"✅ SAGA {saga_id} | Compensation completed for task {task_id}")
+            return True
             
         except Exception as e:
             logger.error(f"💥 SAGA {saga_id} | COMPENSATION FAILED: {str(e)}")
             self._log_saga(saga_id, "COMPENSATION_FAILED", str(e))
+            return False
+    
+    def _create_task(self, task_data: dict, user_id: int, saga_id: str) -> Task:
+        """Paso 1: Crear tarea en la base de datos con saga_id"""
+        task = Task(**task_data, user_id=user_id, saga_id=saga_id)
+        self.db.add(task)
+        self.db.commit()
+        self.db.refresh(task)
+        logger.info(f"✅ Task {task.id} created in database")
+        return task
     
     def _log_saga(self, saga_id: str, status: str, details: str):
         """Registrar cada paso del SAGA para auditoría"""
@@ -130,3 +127,32 @@ class TaskCreationSaga:
             self.db.commit()
         except Exception as e:
             logger.error(f"Failed to log SAGA: {str(e)}")
+
+
+class SagaCompensationHandler:
+    """
+    Handler para procesar eventos de compensación
+    Separado del SAGA principal para mejor organización
+    """
+    
+    @staticmethod
+    def handle_notification_failed(db: Session, payload: dict):
+        """
+        Maneja el evento 'notification_failed'
+        Ejecuta la compensación correspondiente
+        """
+        task_id = payload.get("task_id")
+        saga_id = payload.get("saga_id")
+        reason = payload.get("reason", "Notification service failed")
+        
+        logger.warning(f"🔴 Received NOTIFICATION_FAILED event for task {task_id}")
+        
+        saga = TaskCreationSaga(db)
+        success = saga.compensate(task_id, saga_id, reason)
+        
+        if success:
+            logger.info(f"✅ Compensation completed for task {task_id}")
+        else:
+            logger.error(f"❌ Compensation FAILED for task {task_id}")
+        
+        return success

@@ -4,7 +4,7 @@ from .database import SessionLocal
 from .models import Task
 from .schemas import TaskCreate, TaskUpdate
 from .dependencies import get_current_user_id
-from .saga import TaskCreationSaga
+from .saga import TaskCreationSaga, SagaCompensationHandler
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,23 +25,28 @@ def create_task(
     user_id: int = Depends(get_current_user_id)
 ):
     """
-    Crea una tarea utilizando el patrón SAGA
-    Si falla la notificación, hace rollback automático
-    """
-    logger.info(f"🚀 Creating task for user {user_id}")
+    Crea una tarea usando COREOGRAFÍA PURA
     
-    # Ejecutar SAGA
+    Cambios vs versión anterior:
+    - Retorna INMEDIATAMENTE después de crear la tarea
+    - NO espera respuesta del Notification Service
+    - La compensación se ejecuta cuando RECIBE un evento de fallo
+    """
+    logger.info(f"🚀 Creating task for user {user_id} (choreography)")
+    
+    # Ejecutar SAGA (solo paso 1 + publicar evento)
     saga = TaskCreationSaga(db)
     result = saga.execute(task.dict(), user_id)
     
     if not result["success"]:
         logger.error(f"❌ Task creation failed: {result['message']}")
         raise HTTPException(
-            status_code=503,
+            status_code=500,
             detail=result["message"]
         )
     
-    logger.info(f"✅ Task {result['task'].id} created successfully")
+    # ⚡ Retornar inmediatamente (coreografía)
+    logger.info(f"✅ Task {result['task'].id} created (saga_id: {result['saga_id']})")
     return result["task"]
 
 @router.get("/")
@@ -111,3 +116,52 @@ def get_saga_logs(
         }
         for log in logs
     ]
+
+
+# ========== NUEVO: Event Handler Endpoint ==========
+@router.post("/events")
+def handle_event(event: dict, db: Session = Depends(get_db)):
+    """
+    Endpoint para RECIBIR eventos de otros servicios
+    Implementa la parte de "escuchar" en la coreografía
+    """
+    event_type = event.get("type")
+    payload = event.get("payload")
+    
+    logger.info(f"📨 Task Service received event: {event_type}")
+    
+    # Manejar evento de notificación fallida
+    if event_type == "notification_failed":
+        success = SagaCompensationHandler.handle_notification_failed(db, payload)
+        
+        if success:
+            return {"status": "compensation executed", "event": event_type}
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Compensation failed"
+            )
+    
+    # Manejar evento de notificación exitosa (opcional, para logging)
+    elif event_type == "notification_sent":
+        task_id = payload.get("task_id")
+        saga_id = payload.get("saga_id")
+        
+        logger.info(f"✅ Notification confirmed for task {task_id}")
+        
+        # Registrar en logs
+        from .models import SagaLog
+        log = SagaLog(
+            saga_id=saga_id,
+            status="COMPLETED",
+            details=f"Task {task_id} - Notification sent successfully"
+        )
+        db.add(log)
+        db.commit()
+        
+        return {"status": "event processed", "event": event_type}
+    
+    # Evento desconocido
+    else:
+        logger.warning(f"⚠️ Unknown event type: {event_type}")
+        return {"status": "event ignored", "event": event_type}
