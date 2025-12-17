@@ -65,7 +65,6 @@ async def register(request: Request):
         )
 
 
-# ← NUEVO: endpoint para obtener info del usuario actual
 @router.get("/me")
 async def get_me(request: Request):
     try:
@@ -90,7 +89,6 @@ async def tasks(request: Request):
         if request.method == "POST":
             body = await request.json()
         
-        # Obtener query params para filtros
         query_params = dict(request.query_params)
         
         async with httpx.AsyncClient() as client:
@@ -110,7 +108,6 @@ async def tasks(request: Request):
         )
 
 
-# ← NUEVO: endpoint para consultar tarea por código
 @router.get("/tasks/code/{code}")
 async def task_by_code(code: str, request: Request):
     try:
@@ -122,6 +119,26 @@ async def task_by_code(code: str, request: Request):
         return await proxy_response(r)
     except Exception as e:
         logger.error(f"Task by code error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Gateway error: {str(e)}"}
+        )
+
+
+# ← CORREGIDO: Este endpoint debe ir ANTES de /tasks/{task_id}
+@router.get("/tasks/saga-logs")
+async def saga_logs(request: Request):
+    try:
+        logger.info("Fetching SAGA logs from Task Service")
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{TASK_SERVICE_URL}/tasks/saga-logs",
+                headers=forward_headers(request)
+            )
+        logger.info(f"SAGA logs response status: {r.status_code}")
+        return await proxy_response(r)
+    except Exception as e:
+        logger.error(f"SAGA logs error: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={"detail": f"Gateway error: {str(e)}"}
@@ -168,17 +185,19 @@ async def task_detail(task_id: int, request: Request):
         )
 
 
-@router.get("/tasks/saga-logs")
-async def saga_logs(request: Request):
+@router.post("/tasks/events")
+async def task_events(request: Request):
     try:
+        body = await request.json()
         async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{TASK_SERVICE_URL}/tasks/saga-logs",
-                headers=forward_headers(request)
+            r = await client.post(
+                f"{TASK_SERVICE_URL}/tasks/events",
+                headers=forward_headers(request),
+                json=body
             )
         return await proxy_response(r)
     except Exception as e:
-        logger.error(f"SAGA logs error: {str(e)}")
+        logger.error(f"Task events error: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={"detail": f"Gateway error: {str(e)}"}

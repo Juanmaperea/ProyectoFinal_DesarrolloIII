@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from .database import SessionLocal
-from .models import Task
+from .models import Task, SagaLog
 from .schemas import TaskCreate, TaskUpdate
 from .dependencies import get_current_user_id
 from .saga import TaskCreationSaga, SagaCompensationHandler
@@ -72,6 +72,35 @@ def list_tasks(
     
     return query.order_by(Task.created_at.desc()).all()
 
+
+# ← CORREGIDO: Este endpoint debe ir ANTES de /code/{code} y /{task_id}
+@router.get("/saga-logs")
+def get_saga_logs(db: Session = Depends(get_db)):
+    """Endpoint para ver los logs de SAGAs - NO requiere user_id"""
+    try:
+        logger.info("📊 Fetching SAGA logs")
+        logs = db.query(SagaLog).order_by(SagaLog.timestamp.desc()).limit(50).all()
+        
+        result = [
+            {
+                "saga_id": log.saga_id,
+                "status": log.status,
+                "details": log.details,
+                "timestamp": log.timestamp.isoformat()
+            }
+            for log in logs
+        ]
+        
+        logger.info(f"✅ Returning {len(result)} SAGA logs")
+        return result
+    except Exception as e:
+        logger.error(f"❌ Error fetching SAGA logs: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching SAGA logs: {str(e)}"
+        )
+
+
 @router.get("/code/{code}")
 def get_task_by_code(
     code: str,
@@ -89,6 +118,7 @@ def get_task_by_code(
     
     return task
 
+
 @router.get("/{task_id}")
 def get_task(
     task_id: int,
@@ -105,6 +135,7 @@ def get_task(
         raise HTTPException(status_code=404, detail="Task not found")
     
     return task
+
 
 @router.put("/{task_id}")
 def update_task(
@@ -129,6 +160,7 @@ def update_task(
     db.refresh(db_task)
     return db_task
 
+
 @router.delete("/{task_id}")
 def delete_task(
     task_id: int,
@@ -147,26 +179,6 @@ def delete_task(
     db.delete(task)
     db.commit()
     return {"message": "Task deleted"}
-
-
-@router.get("/saga-logs")
-def get_saga_logs(
-    db: Session = Depends(get_db),
-    user_id: int = Depends(get_current_user_id)
-):
-    """Endpoint para ver los logs de SAGAs"""
-    from .models import SagaLog
-    logs = db.query(SagaLog).order_by(SagaLog.timestamp.desc()).limit(50).all()
-    
-    return [
-        {
-            "saga_id": log.saga_id,
-            "status": log.status,
-            "details": log.details,
-            "timestamp": log.timestamp.isoformat()
-        }
-        for log in logs
-    ]
 
 
 @router.post("/events")
@@ -194,7 +206,6 @@ def handle_event(event: dict, db: Session = Depends(get_db)):
         
         logger.info(f"✅ Notification confirmed for task {task_id}")
         
-        from .models import SagaLog
         log = SagaLog(
             saga_id=saga_id,
             status="COMPLETED",
