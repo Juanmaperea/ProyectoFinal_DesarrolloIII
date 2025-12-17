@@ -3,42 +3,33 @@ from sqlalchemy.orm import Session
 from .models import Task, SagaLog
 from .rabbitmq_client import get_rabbitmq_client
 from datetime import datetime
+import random
+import string
 
 logger = logging.getLogger(__name__)
 
+def generate_task_code():
+    """Genera un código único para la tarea"""
+    return f"TASK-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
+
 class TaskCreationSaga:
-    """
-    SAGA con RabbitMQ Message Broker
-    
-    Ventajas sobre HTTP directo:
-    ✅ Desacoplamiento total entre servicios
-    ✅ Garantía de entrega de mensajes (persistent + ACK)
-    ✅ Reintentos automáticos en caso de fallo
-    ✅ Los servicios no necesitan estar disponibles simultáneamente
-    ✅ Escalabilidad: múltiples consumidores por cola
-    """
+    """SAGA con RabbitMQ Message Broker"""
     
     def __init__(self, db: Session):
         self.db = db
         self.rabbitmq = get_rabbitmq_client()
     
     def execute(self, task_data: dict, user_id: int) -> dict:
-        """
-        Ejecuta PASO 1: Crear tarea
-        Luego publica evento a RabbitMQ
-        """
+        """Ejecuta PASO 1: Crear tarea y publicar evento"""
         saga_id = f"task_creation_{datetime.utcnow().timestamp()}"
         
-        # Log inicio de SAGA
         self._log_saga(saga_id, "STARTED", "Task creation SAGA started (RabbitMQ)")
         
         try:
-            # ========== PASO 1: Crear Tarea ==========
             logger.info(f"🔵 SAGA {saga_id} | STEP 1: Creating task")
             task = self._create_task(task_data, user_id, saga_id)
-            self._log_saga(saga_id, "TASK_CREATED", f"Task {task.id} created")
+            self._log_saga(saga_id, "TASK_CREATED", f"Task {task.id} created with code {task.code}")
             
-            # ========== PASO 2: Publicar a RabbitMQ ==========
             logger.info(f"🔵 SAGA {saga_id} | STEP 2: Publishing to RabbitMQ")
             
             message = {
@@ -52,7 +43,6 @@ class TaskCreationSaga:
                 }
             }
             
-            # Publicar a exchange con routing key
             success = self.rabbitmq.publish(
                 exchange="task_events",
                 routing_key="task.created",
@@ -60,7 +50,6 @@ class TaskCreationSaga:
             )
             
             if not success:
-                # Si falla la publicación, compensar
                 logger.error(f"❌ SAGA {saga_id} | Failed to publish to RabbitMQ")
                 self._compensate_task_creation(task.id, saga_id, "Failed to publish event")
                 
@@ -91,9 +80,7 @@ class TaskCreationSaga:
             }
     
     def compensate(self, task_id: int, saga_id: str, reason: str):
-        """
-        Compensación ejecutada cuando se recibe un evento de fallo desde RabbitMQ
-        """
+        """Compensación ejecutada cuando se recibe un evento de fallo desde RabbitMQ"""
         try:
             logger.warning(f"🔄 SAGA {saga_id} | COMPENSATING: Deleting task {task_id}")
             logger.warning(f"   Reason: {reason}")
@@ -105,7 +92,6 @@ class TaskCreationSaga:
                 self._log_saga(saga_id, "COMPENSATION_FAILED", f"Task {task_id} not found")
                 return False
             
-            # Eliminar la tarea
             self.db.delete(task)
             self.db.commit()
             
@@ -135,12 +121,24 @@ class TaskCreationSaga:
             logger.error(f"💥 Failed to compensate task {task_id}: {str(e)}")
     
     def _create_task(self, task_data: dict, user_id: int, saga_id: str) -> Task:
-        """Paso 1: Crear tarea en la base de datos con saga_id"""
-        task = Task(**task_data, user_id=user_id, saga_id=saga_id)
+        """Paso 1: Crear tarea en la base de datos con saga_id y código único"""
+        code = generate_task_code()
+        
+        # Verificar que el código sea único
+        while self.db.query(Task).filter(Task.code == code).first():
+            code = generate_task_code()
+        
+        task = Task(
+            **task_data, 
+            user_id=user_id, 
+            saga_id=saga_id,
+            code=code,
+            status="todo"  # Estado inicial
+        )
         self.db.add(task)
         self.db.commit()
         self.db.refresh(task)
-        logger.info(f"✅ Task {task.id} created in database")
+        logger.info(f"✅ Task {task.id} created with code {code}")
         return task
     
     def _log_saga(self, saga_id: str, status: str, details: str):
@@ -159,15 +157,11 @@ class TaskCreationSaga:
 
 
 class SagaCompensationHandler:
-    """
-    Handler para procesar eventos de compensación desde RabbitMQ
-    """
+    """Handler para procesar eventos de compensación desde RabbitMQ"""
     
     @staticmethod
     def handle_notification_failed(db: Session, payload: dict):
-        """
-        Maneja el evento 'notification_failed' recibido desde RabbitMQ
-        """
+        """Maneja el evento 'notification_failed' recibido desde RabbitMQ"""
         task_id = payload.get("task_id")
         saga_id = payload.get("saga_id")
         reason = payload.get("reason", "Notification service failed")
@@ -186,15 +180,12 @@ class SagaCompensationHandler:
     
     @staticmethod
     def handle_notification_sent(db: Session, payload: dict):
-        """
-        Maneja el evento 'notification_sent' (confirmación de éxito)
-        """
+        """Maneja el evento 'notification_sent' (confirmación de éxito)"""
         task_id = payload.get("task_id")
         saga_id = payload.get("saga_id")
         
         logger.info(f"✅ Notification confirmed via RabbitMQ for task {task_id}")
         
-        # Registrar en logs
         log = SagaLog(
             saga_id=saga_id,
             status="COMPLETED",

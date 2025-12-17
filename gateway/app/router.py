@@ -65,6 +65,24 @@ async def register(request: Request):
         )
 
 
+# ← NUEVO: endpoint para obtener info del usuario actual
+@router.get("/me")
+async def get_me(request: Request):
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{AUTH_SERVICE_URL}/me",
+                headers=forward_headers(request)
+            )
+        return await proxy_response(r)
+    except Exception as e:
+        logger.error(f"Get me error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Gateway error: {str(e)}"}
+        )
+
+
 @router.api_route("/tasks/", methods=["GET", "POST"])
 async def tasks(request: Request):
     try:
@@ -72,16 +90,55 @@ async def tasks(request: Request):
         if request.method == "POST":
             body = await request.json()
         
+        # Obtener query params para filtros
+        query_params = dict(request.query_params)
+        
         async with httpx.AsyncClient() as client:
             r = await client.request(
                 request.method,
                 f"{TASK_SERVICE_URL}/tasks/",
                 headers=forward_headers(request),
-                json=body
+                json=body,
+                params=query_params
             )
         return await proxy_response(r)
     except Exception as e:
         logger.error(f"Tasks error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Gateway error: {str(e)}"}
+        )
+
+
+# ← NUEVO: endpoint para consultar tarea por código
+@router.get("/tasks/code/{code}")
+async def task_by_code(code: str, request: Request):
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{TASK_SERVICE_URL}/tasks/code/{code}",
+                headers=forward_headers(request)
+            )
+        return await proxy_response(r)
+    except Exception as e:
+        logger.error(f"Task by code error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Gateway error: {str(e)}"}
+        )
+
+
+@router.get("/tasks/{task_id}")
+async def get_task(task_id: int, request: Request):
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{TASK_SERVICE_URL}/tasks/{task_id}",
+                headers=forward_headers(request)
+            )
+        return await proxy_response(r)
+    except Exception as e:
+        logger.error(f"Get task error: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={"detail": f"Gateway error: {str(e)}"}
@@ -113,9 +170,6 @@ async def task_detail(task_id: int, request: Request):
 
 @router.get("/tasks/saga-logs")
 async def saga_logs(request: Request):
-    """
-    Nuevo endpoint para obtener logs de SAGA
-    """
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(

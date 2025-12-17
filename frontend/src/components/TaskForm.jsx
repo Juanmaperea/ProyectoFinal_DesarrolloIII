@@ -7,12 +7,19 @@ import {
   CircularProgress,
   Alert,
   Collapse,
-  Chip
+  Chip,
+  Grid,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem
 } from "@mui/material";
 
 export default function TaskForm({ onCreated }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("Mixto");
+  const [priority, setPriority] = useState("Media");
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -25,30 +32,27 @@ export default function TaskForm({ onCreated }) {
     try {
       const response = await api.post("/tasks/", {
         title: title.trim(),
-        description: description.trim()
+        description: description.trim(),
+        category,
+        priority
       });
 
-      // ✅ Tarea creada y evento publicado a RabbitMQ
       setTitle("");
       setDescription("");
+      setCategory("Mixto");
+      setPriority("Media");
       
-      // Mensaje actualizado para reflejar comportamiento asíncrono
       setSuccessMessage(
-        "✅ Tarea creada y enviada a RabbitMQ. " +
-        "La notificación se procesará de forma asíncrona."
+        `✅ Tarea creada exitosamente (Código: ${response.data.code})`
       );
       
-      // Notificar éxito al padre
       onCreated(true, response.data);
 
-      // Auto-ocultar mensaje de éxito
       setTimeout(() => setSuccessMessage(""), 5000);
 
     } catch (err) {
       console.error("Task creation error:", err);
 
-      // El frontend ya NO recibe errores 503 inmediatamente
-      // porque RabbitMQ garantiza la entrega
       const errorMessage = err.response?.data?.detail || 
         "Error al crear la tarea. Por favor, intenta de nuevo.";
       
@@ -67,74 +71,100 @@ export default function TaskForm({ onCreated }) {
 
   return (
     <Box>
-      {/* Success Message with RabbitMQ indicator */}
       <Collapse in={successMessage !== ""}>
         <Alert 
           severity="success" 
           sx={{ mb: 2 }}
-          icon={<span>🐰</span>}
+          icon={<span>🎉</span>}
         >
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-            {successMessage}
-            <Chip 
-              label="RabbitMQ" 
-              size="small" 
-              color="success" 
-              variant="outlined"
-              sx={{ fontSize: "0.7rem", height: "20px" }}
-            />
-          </Box>
-          <Box sx={{ fontSize: "0.85rem", opacity: 0.9, mt: 0.5 }}>
-            💡 El evento fue publicado exitosamente. RabbitMQ garantiza que se procese aunque 
-            el servicio de notificaciones esté temporalmente no disponible.
-          </Box>
+          {successMessage}
         </Alert>
       </Collapse>
 
-      {/* Form */}
-      <Box sx={{ 
-        display: "flex", 
-        gap: 2, 
-        flexDirection: { xs: "column", sm: "row" },
-        alignItems: "stretch"
-      }}>
-        <TextField
-          label="Título"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyPress={handleKeyPress}
-          disabled={loading}
-          fullWidth
-          required
-          placeholder="Ej: Comprar comida"
-        />
+      <Grid container spacing={2}>
+        <Grid item xs={12} sm={6}>
+          <TextField
+            label="Título"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyPress={handleKeyPress}
+            disabled={loading}
+            fullWidth
+            required
+            placeholder="Ej: Implementar login"
+          />
+        </Grid>
         
-        <TextField
-          label="Descripción"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          onKeyPress={handleKeyPress}
-          disabled={loading}
-          fullWidth
-          placeholder="Detalles opcionales..."
-        />
-        
-        <Button 
-          variant="contained" 
-          onClick={handleSubmit}
-          disabled={loading || !title.trim()}
-          sx={{ 
-            minWidth: { xs: "100%", sm: "120px" },
-            height: "56px"
-          }}
-        >
-          {loading ? (
-            <CircularProgress size={24} color="inherit" />
-          ) : (
-            "Crear"
-          )}
-        </Button>
-      </Box>
+        <Grid item xs={12} sm={6}>
+          <TextField
+            label="Descripción"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            onKeyPress={handleKeyPress}
+            disabled={loading}
+            fullWidth
+            placeholder="Detalles opcionales..."
+          />
+        </Grid>
+
+        <Grid item xs={12} sm={4}>
+          <FormControl fullWidth>
+            <InputLabel>Categoría</InputLabel>
+            <Select
+              value={category}
+              label="Categoría"
+              onChange={(e) => setCategory(e.target.value)}
+              disabled={loading}
+            >
+              <MenuItem value="Frontend">Frontend</MenuItem>
+              <MenuItem value="Backend">Backend</MenuItem>
+              <MenuItem value="Full Stack">Full Stack</MenuItem>
+              <MenuItem value="Product Owner">Product Owner</MenuItem>
+              <MenuItem value="Scrum">Scrum</MenuItem>
+              <MenuItem value="Mixto">Mixto</MenuItem>
+              <MenuItem value="QA">QA</MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+
+        <Grid item xs={12} sm={4}>
+          <FormControl fullWidth>
+            <InputLabel>Prioridad</InputLabel>
+            <Select
+              value={priority}
+              label="Prioridad"
+              onChange={(e) => setPriority(e.target.value)}
+              disabled={loading}
+            >
+              <MenuItem value="Alta">🔴 Alta</MenuItem>
+              <MenuItem value="Media">🟡 Media</MenuItem>
+              <MenuItem value="Baja">🟢 Baja</MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+
+        <Grid item xs={12} sm={4}>
+          <Button 
+            variant="contained" 
+            onClick={handleSubmit}
+            disabled={loading || !title.trim()}
+            fullWidth
+            sx={{ 
+              height: "56px",
+              background: "linear-gradient(45deg, #667eea 30%, #764ba2 90%)",
+              "&:hover": {
+                background: "linear-gradient(45deg, #5568d3 30%, #6a3f8f 90%)",
+              }
+            }}
+          >
+            {loading ? (
+              <CircularProgress size={24} color="inherit" />
+            ) : (
+              "Crear Tarea"
+            )}
+          </Button>
+        </Grid>
+      </Grid>
     </Box>
   );
 }

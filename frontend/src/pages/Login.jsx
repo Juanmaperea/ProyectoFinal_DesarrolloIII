@@ -8,7 +8,8 @@ import {
   Container, 
   Typography, 
   Alert,
-  Box 
+  Box,
+  Paper
 } from "@mui/material";
 
 export default function Login() {
@@ -26,7 +27,7 @@ export default function Login() {
       setLoading(true);
       
       const res = await api.post("/login", { email, password });
-      login(res.data.access_token);
+      login(res.data.access_token, res.data.user);
       navigate("/dashboard");
     } catch (err) {
       console.error("Login error:", err.response?.data || err.message);
@@ -44,56 +45,90 @@ export default function Login() {
   };
 
   return (
-    <Container maxWidth="xs" sx={{ mt: 8 }}>
-      <Typography variant="h4" sx={{ mb: 3 }}>
-        Login
-      </Typography>
+    <Box sx={{ 
+      minHeight: "100vh", 
+      background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center"
+    }}>
+      <Container maxWidth="xs">
+        <Paper elevation={10} sx={{ p: 4, borderRadius: 3 }}>
+          <Typography 
+            variant="h4" 
+            sx={{ 
+              mb: 3, 
+              textAlign: "center",
+              fontWeight: "bold",
+              background: "linear-gradient(45deg, #667eea 30%, #764ba2 90%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent"
+            }}
+          >
+            Task Manager
+          </Typography>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
 
-      <TextField 
-        fullWidth 
-        label="Email" 
-        type="email"
-        margin="normal"
-        value={email}
-        onChange={e => setEmail(e.target.value)}
-        disabled={loading}
-      />
-      
-      <TextField 
-        fullWidth 
-        label="Password" 
-        type="password" 
-        margin="normal"
-        value={password}
-        onChange={e => setPassword(e.target.value)}
-        onKeyPress={(e) => e.key === 'Enter' && handleSubmit()}
-        disabled={loading}
-      />
-      
-      <Button 
-        fullWidth 
-        variant="contained" 
-        onClick={handleSubmit}
-        sx={{ mt: 2 }}
-        disabled={loading || !email || !password}
-      >
-        {loading ? "Logging in..." : "Login"}
-      </Button>
+          <TextField 
+            fullWidth 
+            label="Email" 
+            type="email"
+            margin="normal"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            disabled={loading}
+            variant="outlined"
+          />
+          
+          <TextField 
+            fullWidth 
+            label="Password" 
+            type="password" 
+            margin="normal"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleSubmit()}
+            disabled={loading}
+            variant="outlined"
+          />
+          
+          <Button 
+            fullWidth 
+            variant="contained" 
+            onClick={handleSubmit}
+            sx={{ 
+              mt: 3,
+              py: 1.5,
+              background: "linear-gradient(45deg, #667eea 30%, #764ba2 90%)",
+              boxShadow: "0 3px 5px 2px rgba(102, 126, 234, .3)",
+              "&:hover": {
+                background: "linear-gradient(45deg, #5568d3 30%, #6a3f8f 90%)",
+              }
+            }}
+            disabled={loading || !email || !password}
+          >
+            {loading ? "Logging in..." : "Login"}
+          </Button>
 
-      <Box sx={{ mt: 2, textAlign: "center" }}>
-        <Typography variant="body2">
-          Don't have an account?{" "}
-          <Link to="/register" style={{ textDecoration: "none" }}>
-            Register here
-          </Link>
-        </Typography>
-      </Box>
-    </Container>
+          <Box sx={{ mt: 2, textAlign: "center" }}>
+            <Typography variant="body2" color="text.secondary">
+              Don't have an account?{" "}
+              <Link to="/register" style={{ 
+                textDecoration: "none", 
+                color: "#667eea",
+                fontWeight: "bold"
+              }}>
+                Register here
+              </Link>
+            </Typography>
+          </Box>
+        </Paper>
+      </Container>
+    </Box>
   );
 }

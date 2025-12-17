@@ -8,10 +8,17 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     description = Column(String)
-    status = Column(String, default="pending")
+    
+    # ← NUEVO: Campos adicionales
+    status = Column(String, default="todo")  # todo, doing, done
+    category = Column(String, default="Mixto")  # Frontend, Backend, etc.
+    priority = Column(String, default="Media")  # Alta, Media, Baja
+    code = Column(String, unique=True, index=True)  # Código único para consulta
+    
     user_id = Column(Integer, index=True)
-    saga_id = Column(String, index=True)  # ← NUEVO: para rastrear SAGA
+    saga_id = Column(String, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class SagaLog(Base):
@@ -24,14 +31,6 @@ class SagaLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     saga_id = Column(String, nullable=False, index=True)
     status = Column(String, nullable=False)
-    # Estados posibles en COREOGRAFÍA:
-    # - STARTED: SAGA iniciado
-    # - TASK_CREATED: Tarea creada
-    # - EVENT_PUBLISHED: Evento publicado
-    # - COMPLETED: Notificación confirmada (via evento)
-    # - COMPENSATED: Tarea eliminada (via evento de fallo)
-    # - FAILED: Error en creación de tarea
-    # - COMPENSATION_FAILED: Fallo al compensar
     details = Column(Text)
     timestamp = Column(DateTime, default=datetime.utcnow)
     
