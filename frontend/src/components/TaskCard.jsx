@@ -8,12 +8,14 @@ import {
   Box,
   Chip,
   IconButton,
-  Tooltip
+  Tooltip,
+  LinearProgress
 } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
 
-export default function TaskCard({ task, onUpdate }) {
+export default function TaskCard({ task, onUpdate, isPending = false }) {
   const [deleting, setDeleting] = useState(false);
 
   const deleteTask = async () => {
@@ -52,12 +54,26 @@ export default function TaskCard({ task, onUpdate }) {
       sx={{ 
         mb: 2,
         transition: "all 0.2s",
+        opacity: isPending ? 0.7 : 1,
         "&:hover": {
           boxShadow: 3,
           transform: "translateY(-2px)"
         }
       }}
     >
+      {/* Progress bar for pending tasks */}
+      {isPending && (
+        <LinearProgress 
+          sx={{ 
+            height: 3,
+            backgroundColor: "#fff3e0",
+            "& .MuiLinearProgress-bar": {
+              backgroundColor: "#ff9800"
+            }
+          }} 
+        />
+      )}
+      
       <CardContent>
         <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 1 }}>
           <Box sx={{ flex: 1 }}>
@@ -65,9 +81,16 @@ export default function TaskCard({ task, onUpdate }) {
               <Typography variant="h6" component="div">
                 {task.title}
               </Typography>
-              <Tooltip title="Tarea creada exitosamente (SAGA completado)">
-                <CheckCircleIcon sx={{ color: "success.main", fontSize: 18 }} />
-              </Tooltip>
+              
+              {isPending ? (
+                <Tooltip title="Procesando notificación vía RabbitMQ...">
+                  <HourglassEmptyIcon sx={{ color: "warning.main", fontSize: 18 }} />
+                </Tooltip>
+              ) : (
+                <Tooltip title="Tarea confirmada (SAGA completado vía RabbitMQ)">
+                  <CheckCircleIcon sx={{ color: "success.main", fontSize: 18 }} />
+                </Tooltip>
+              )}
             </Box>
             
             {task.description && (
@@ -80,7 +103,7 @@ export default function TaskCard({ task, onUpdate }) {
           <IconButton 
             color="error" 
             onClick={deleteTask}
-            disabled={deleting}
+            disabled={deleting || isPending}
             size="small"
           >
             <DeleteIcon />
@@ -95,10 +118,41 @@ export default function TaskCard({ task, onUpdate }) {
             sx={{ textTransform: "capitalize" }}
           />
           
+          {isPending && (
+            <Chip 
+              icon={<span>🐰</span>}
+              label="Procesando en RabbitMQ"
+              size="small"
+              color="warning"
+              variant="outlined"
+              sx={{ fontSize: "0.7rem" }}
+            />
+          )}
+          
+          {task.saga_id && (
+            <Tooltip title={`SAGA ID: ${task.saga_id}`}>
+              <Chip 
+                label="SAGA"
+                size="small"
+                variant="outlined"
+                sx={{ fontSize: "0.7rem" }}
+              />
+            </Tooltip>
+          )}
+          
           <Typography variant="caption" color="text.secondary">
             Creada: {formatDate(task.created_at)}
           </Typography>
         </Box>
+
+        {isPending && (
+          <Box sx={{ mt: 1, pt: 1, borderTop: "1px solid #e0e0e0" }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <span>⏳</span>
+              Esperando confirmación de notificación desde RabbitMQ...
+            </Typography>
+          </Box>
+        )}
       </CardContent>
     </Card>
   );

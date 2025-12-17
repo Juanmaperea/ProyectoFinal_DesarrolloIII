@@ -6,7 +6,8 @@ import {
   Box, 
   CircularProgress,
   Alert,
-  Collapse 
+  Collapse,
+  Chip
 } from "@mui/material";
 
 export default function TaskForm({ onCreated }) {
@@ -27,31 +28,31 @@ export default function TaskForm({ onCreated }) {
         description: description.trim()
       });
 
-      // SAGA Exitoso
+      // ✅ Tarea creada y evento publicado a RabbitMQ
       setTitle("");
       setDescription("");
-      setSuccessMessage("✅ Tarea creada exitosamente (SAGA completado)");
+      
+      // Mensaje actualizado para reflejar comportamiento asíncrono
+      setSuccessMessage(
+        "✅ Tarea creada y enviada a RabbitMQ. " +
+        "La notificación se procesará de forma asíncrona."
+      );
       
       // Notificar éxito al padre
-      onCreated(true);
+      onCreated(true, response.data);
 
       // Auto-ocultar mensaje de éxito
-      setTimeout(() => setSuccessMessage(""), 4000);
+      setTimeout(() => setSuccessMessage(""), 5000);
 
     } catch (err) {
       console.error("Task creation error:", err);
 
-      // Detectar error de SAGA (rollback)
-      if (err.response?.status === 503) {
-        // Error 503 = Servicio de notificaciones no disponible
-        const errorMessage = err.response?.data?.detail || 
-          "El servicio de notificaciones no está disponible. La tarea no fue creada.";
-        
-        onCreated(false, errorMessage);
-      } else {
-        // Otros errores
-        onCreated(false, "Error al crear la tarea. Por favor, intenta de nuevo.");
-      }
+      // El frontend ya NO recibe errores 503 inmediatamente
+      // porque RabbitMQ garantiza la entrega
+      const errorMessage = err.response?.data?.detail || 
+        "Error al crear la tarea. Por favor, intenta de nuevo.";
+      
+      onCreated(false, null, errorMessage);
     } finally {
       setLoading(false);
     }
@@ -66,10 +67,27 @@ export default function TaskForm({ onCreated }) {
 
   return (
     <Box>
-      {/* Success Message */}
+      {/* Success Message with RabbitMQ indicator */}
       <Collapse in={successMessage !== ""}>
-        <Alert severity="success" sx={{ mb: 2 }}>
-          {successMessage}
+        <Alert 
+          severity="success" 
+          sx={{ mb: 2 }}
+          icon={<span>🐰</span>}
+        >
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
+            {successMessage}
+            <Chip 
+              label="RabbitMQ" 
+              size="small" 
+              color="success" 
+              variant="outlined"
+              sx={{ fontSize: "0.7rem", height: "20px" }}
+            />
+          </Box>
+          <Box sx={{ fontSize: "0.85rem", opacity: 0.9, mt: 0.5 }}>
+            💡 El evento fue publicado exitosamente. RabbitMQ garantiza que se procese aunque 
+            el servicio de notificaciones esté temporalmente no disponible.
+          </Box>
         </Alert>
       </Collapse>
 

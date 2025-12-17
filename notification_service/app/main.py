@@ -1,40 +1,43 @@
 from fastapi import FastAPI, HTTPException
-from .consumer import consume_event
-from .event_publisher import publish_event_to_task_service
 import random
 import logging
-import asyncio
+import sys
+import os
+
+# Agregar el directorio padre al path para importar rabbitmq_client
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.rabbitmq_client import RabbitMQClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Notification Service")
 
+# Cliente RabbitMQ
+rabbitmq_client = None
+
 # Variable para simular fallos
 FAILURE_RATE = 0.3  # 30% de probabilidad de fallo
 
-@app.post("/events")
-async def receive_event(event: dict):
+
+# ========== Procesador de Eventos ==========
+def process_task_event(message: dict):
     """
-    Recibe eventos de otros servicios (COREOGRAFÍA)
+    Callback para procesar eventos de Task Service
+    """
+    event_type = message.get("type")
+    payload = message.get("payload", {})
     
-    Cambios vs versión anterior:
-    - Procesa el evento de forma asíncrona
-    - Publica evento de respuesta (success/failure)
-    - NO retorna error HTTP, siempre retorna 200
-    - Los errores se comunican vía eventos
-    """
-    event_type = event.get("type")
-    payload = event.get("payload")
-    saga_id = payload.get("saga_id", "unknown")
     task_id = payload.get("task_id")
+    saga_id = payload.get("saga_id", "unknown")
+    user_id = payload.get("user_id")
     
-    logger.info(f"📨 Notification Service received event: {event_type} | SAGA: {saga_id}")
+    logger.info(f"📨 Processing task event: {event_type} | Task: {task_id} | SAGA: {saga_id}")
     
-    # Solo procesamos eventos task_created
     if event_type != "task_created":
         logger.warning(f"⚠️ Ignoring event type: {event_type}")
-        return {"status": "event ignored"}
+        return
     
     # 🎲 Simular procesamiento (puede fallar)
     try:
@@ -42,62 +45,117 @@ async def receive_event(event: dict):
             # FALLO SIMULADO
             logger.error(f"💥 SIMULATED FAILURE for SAGA {saga_id}")
             
-            # Publicar evento de fallo HACIA Task Service
-            await publish_event_to_task_service(
-                "notification_failed",
-                {
-                    "task_id": task_id,
-                    "saga_id": saga_id,
-                    "reason": "Notification service temporarily unavailable (simulated)",
-                    "user_id": payload.get("user_id")
+            # Publicar evento de fallo a RabbitMQ
+            rabbitmq_client.publish(
+                exchange="notification_events",
+                routing_key="notification.failed",
+                message={
+                    "type": "notification_failed",
+                    "payload": {
+                        "task_id": task_id,
+                        "saga_id": saga_id,
+                        "reason": "Notification service temporarily unavailable (simulated)",
+                        "user_id": user_id
+                    }
                 }
             )
             
-            # ⚡ IMPORTANTE: Retornamos 200 (no HTTP error)
-            # El fallo se comunica vía evento
-            logger.info(f"📤 Sent 'notification_failed' event to Task Service")
-            return {"status": "notification failed (event sent)"}
-        
+            logger.info(f"📤 Published 'notification_failed' to RabbitMQ")
+            
         else:
             # ÉXITO
-            consume_event(event_type, payload)
+            logger.info(f"📧 Notification Service | User {user_id} - Task {task_id} created successfully")
             logger.info(f"✅ Notification sent successfully | SAGA: {saga_id}")
             
-            # Publicar evento de éxito HACIA Task Service
-            await publish_event_to_task_service(
-                "notification_sent",
-                {
-                    "task_id": task_id,
-                    "saga_id": saga_id,
-                    "user_id": payload.get("user_id")
+            # Publicar evento de éxito a RabbitMQ
+            rabbitmq_client.publish(
+                exchange="notification_events",
+                routing_key="notification.sent",
+                message={
+                    "type": "notification_sent",
+                    "payload": {
+                        "task_id": task_id,
+                        "saga_id": saga_id,
+                        "user_id": user_id
+                    }
                 }
             )
             
-            logger.info(f"📤 Sent 'notification_sent' event to Task Service")
-            return {"status": "notification sent (event sent)"}
+            logger.info(f"📤 Published 'notification_sent' to RabbitMQ")
     
     except Exception as e:
         # Error inesperado
         logger.error(f"💥 Unexpected error in notification service: {str(e)}")
         
         # Publicar evento de fallo
-        await publish_event_to_task_service(
-            "notification_failed",
-            {
-                "task_id": task_id,
-                "saga_id": saga_id,
-                "reason": f"Unexpected error: {str(e)}",
-                "user_id": payload.get("user_id")
+        rabbitmq_client.publish(
+            exchange="notification_events",
+            routing_key="notification.failed",
+            message={
+                "type": "notification_failed",
+                "payload": {
+                    "task_id": task_id,
+                    "saga_id": saga_id,
+                    "reason": f"Unexpected error: {str(e)}",
+                    "user_id": user_id
+                }
             }
         )
+
+
+# ========== Eventos del ciclo de vida ==========
+@app.on_event("startup")
+def startup_event():
+    """
+    Iniciar consumidor de RabbitMQ al arrancar
+    """
+    global rabbitmq_client
+    
+    try:
+        logger.info("🚀 Starting Notification Service...")
         
-        # Retornar 200 (el fallo se comunicó vía evento)
-        return {"status": "notification failed (error, event sent)"}
+        # Conectar a RabbitMQ
+        rabbitmq_client = RabbitMQClient()
+        rabbitmq_client.connect()
+        
+        # Iniciar consumidor en background
+        rabbitmq_client.start_consuming_background(
+            queue_name="notification_service_tasks",
+            callback=process_task_event,
+            routing_keys=[
+                ("task_events", "task.created")
+            ]
+        )
+        
+        logger.info("✅ RabbitMQ consumer started successfully")
+        
+    except Exception as e:
+        logger.error(f"💥 Failed to start RabbitMQ consumer: {str(e)}")
+        logger.warning("⚠️ Notification Service running WITHOUT RabbitMQ consumer")
 
 
+@app.on_event("shutdown")
+def shutdown_event():
+    """
+    Cerrar conexiones al detener
+    """
+    try:
+        if rabbitmq_client:
+            rabbitmq_client.close()
+        logger.info("👋 RabbitMQ connection closed")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {str(e)}")
+
+
+# ========== Endpoints ==========
 @app.get("/health")
 def health():
-    return {"status": "notification service running"}
+    rabbitmq_status = "connected" if rabbitmq_client and rabbitmq_client.connection and not rabbitmq_client.connection.is_closed else "disconnected"
+    return {
+        "status": "notification service running",
+        "rabbitmq": rabbitmq_status,
+        "failure_rate": f"{FAILURE_RATE * 100}%"
+    }
 
 
 @app.post("/config/failure-rate")
@@ -117,3 +175,19 @@ def set_failure_rate(rate: float):
         "message": f"Failure rate set to {rate * 100}%",
         "current_rate": FAILURE_RATE
     }
+
+
+# ========== Endpoint legacy (opcional) ==========
+@app.post("/events")
+async def receive_event(event: dict):
+    """
+    Endpoint HTTP legacy para compatibilidad
+    En producción, solo usarías RabbitMQ
+    """
+    logger.info("⚠️ Received event via HTTP (legacy mode)")
+    logger.info("💡 Tip: Use RabbitMQ for production")
+    
+    # Procesar igual que un mensaje de RabbitMQ
+    process_task_event(event)
+    
+    return {"status": "processed via HTTP (legacy)"}

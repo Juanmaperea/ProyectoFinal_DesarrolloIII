@@ -8,11 +8,13 @@ import {
   Alert,
   Button,
   Collapse,
-  Chip
+  Chip,
+  Paper
 } from "@mui/material";
 import TaskCard from "../components/TaskCard";
 import TaskForm from "../components/TaskForm";
 import SagaLogs from "../components/SagaLogs";
+import RabbitMQMonitor from "../components/RabbitMQMonitor";
 
 export default function Dashboard() {
   const [tasks, setTasks] = useState([]);
@@ -20,6 +22,7 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [sagaError, setSagaError] = useState(null);
   const [showSagaLogs, setShowSagaLogs] = useState(false);
+  const [pendingTasks, setPendingTasks] = useState(new Set());
 
   const loadTasks = async () => {
     try {
@@ -40,21 +43,69 @@ export default function Dashboard() {
     }
   };
 
-  const handleTaskCreated = (success, message) => {
+  const handleTaskCreated = (success, taskData, message) => {
     if (success) {
       setSagaError(null);
+      
+      // Agregar tarea como "pendiente" (esperando confirmación asíncrona)
+      if (taskData && taskData.id) {
+        setPendingTasks(prev => new Set([...prev, taskData.id]));
+        
+        // Simular verificación después de 3 segundos
+        setTimeout(async () => {
+          await loadTasks();
+          setPendingTasks(prev => {
+            const updated = new Set(prev);
+            updated.delete(taskData.id);
+            return updated;
+          });
+        }, 3000);
+      }
+      
       loadTasks();
     } else {
-      // Mostrar error de SAGA con rollback
+      // Error en creación de tarea
       setSagaError({
-        type: "rollback",
-        message: message || "La tarea no pudo ser creada y se realizó un rollback automático"
+        type: "error",
+        message: message || "Error al crear la tarea"
       });
       
-      // Auto-ocultar después de 8 segundos
       setTimeout(() => setSagaError(null), 8000);
     }
   };
+
+  // Polling para detectar rollbacks (opcional, para demo)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (pendingTasks.size > 0) {
+        // Verificar si alguna tarea pendiente desapareció (rollback)
+        try {
+          const res = await api.get("/tasks/");
+          const currentTasks = Array.isArray(res.data) ? res.data : res.data.tasks || [];
+          const currentIds = new Set(currentTasks.map(t => t.id));
+          
+          pendingTasks.forEach(pendingId => {
+            if (!currentIds.has(pendingId)) {
+              // Tarea fue compensada (rollback)
+              setSagaError({
+                type: "rollback",
+                message: "Una tarea fue compensada automáticamente por RabbitMQ debido a un fallo en la notificación."
+              });
+              setPendingTasks(prev => {
+                const updated = new Set(prev);
+                updated.delete(pendingId);
+                return updated;
+              });
+            }
+          });
+        } catch (err) {
+          console.error("Error checking pending tasks:", err);
+        }
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [pendingTasks]);
 
   useEffect(() => {
     loadTasks();
@@ -62,11 +113,20 @@ export default function Dashboard() {
 
   return (
     <Container maxWidth="md" sx={{ mt: 4, mb: 4 }}>
-      {/* Header */}
+      {/* Header with RabbitMQ indicator */}
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-        <Typography variant="h4">
-          My Tasks
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+          <Typography variant="h4">
+            My Tasks
+          </Typography>
+          <Chip 
+            icon={<span>🐰</span>}
+            label="RabbitMQ Enabled" 
+            size="small" 
+            color="primary" 
+            variant="outlined"
+          />
+        </Box>
         <Button 
           variant="outlined" 
           size="small"
@@ -76,22 +136,27 @@ export default function Dashboard() {
         </Button>
       </Box>
 
+      {/* Info Box about RabbitMQ */}
+      <RabbitMQMonitor />
+
       {/* SAGA Error/Rollback Alert */}
       <Collapse in={sagaError !== null}>
         <Alert 
-          severity="warning" 
+          severity={sagaError?.type === "rollback" ? "warning" : "error"}
           sx={{ mb: 2 }}
           onClose={() => setSagaError(null)}
         >
           <Typography variant="subtitle2" sx={{ fontWeight: "bold", mb: 1 }}>
-            🔄 Rollback Ejecutado (Patrón SAGA)
+            {sagaError?.type === "rollback" ? "🔄 Rollback Ejecutado (RabbitMQ)" : "❌ Error"}
           </Typography>
           <Typography variant="body2">
             {sagaError?.message}
           </Typography>
-          <Typography variant="caption" sx={{ mt: 1, display: "block", opacity: 0.8 }}>
-            La tarea fue eliminada automáticamente porque el servicio de notificaciones no está disponible.
-          </Typography>
+          {sagaError?.type === "rollback" && (
+            <Typography variant="caption" sx={{ mt: 1, display: "block", opacity: 0.8 }}>
+              El evento de fallo fue recibido desde RabbitMQ y la compensación se ejecutó automáticamente.
+            </Typography>
+          )}
         </Alert>
       </Collapse>
 
@@ -129,19 +194,27 @@ export default function Dashboard() {
         </Box>
       )}
 
-      {/* Tasks List with SAGA indicator */}
+      {/* Tasks List with pending indicator */}
       <Box sx={{ mt: 3 }}>
         {!loading && tasks.length > 0 && (
-          <Box sx={{ mb: 2, display: "flex", alignItems: "center", gap: 1 }}>
+          <Box sx={{ mb: 2, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
             <Typography variant="body2" color="text.secondary">
               Mostrando {tasks.length} tarea{tasks.length !== 1 ? 's' : ''}
             </Typography>
             <Chip 
-              label="✅ SAGA Completados" 
+              label="✅ Confirmadas" 
               size="small" 
               color="success" 
               variant="outlined"
             />
+            {pendingTasks.size > 0 && (
+              <Chip 
+                label={`⏳ ${pendingTasks.size} Procesando...`}
+                size="small" 
+                color="warning" 
+                variant="outlined"
+              />
+            )}
           </Box>
         )}
         
@@ -150,6 +223,7 @@ export default function Dashboard() {
             key={task.id}
             task={task}
             onUpdate={loadTasks}
+            isPending={pendingTasks.has(task.id)}
           />
         ))}
       </Box>
