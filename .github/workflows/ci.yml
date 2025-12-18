@@ -1,0 +1,39 @@
+name: Microservices CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Run Tests
+        # We reuse the same docker-compose commands that worked locally.
+        # 1. Build images (critical for auth/task service which need updated code)
+        # 2. Run tests for each service.
+        #    Gateway and Notification could technically run without docker, but running
+        #    them inside docker ensures environment consistency (python version, deps).
+        run: |
+          echo "🚀 Building services..."
+          docker compose build
+          
+          echo "🧪 Running Gateway Tests..."
+          docker compose run --rm gateway python -m pytest
+          
+          echo "🧪 Running Notification Service Tests..."
+          docker compose run --rm notification_service python -m pytest
+          
+          echo "🧪 Running Auth Service Tests..."
+          docker compose run --rm auth_service python -m pytest
+          
+          echo "🧪 Running Task Service Tests..."
+          docker compose run --rm task_service python -m pytest
