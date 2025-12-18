@@ -6,7 +6,8 @@ client = TestClient(app)
 def test_register():
     response = client.post("/register", json={
         "email": "test@test.com",
-        "password": "123456"
+        "password": "123456",
+        "name": "Test User"
     })
     assert response.status_code in [200, 400]
 
